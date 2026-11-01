@@ -1,0 +1,9 @@
+# Vector的坐标转换器 · 依赖
+# 行尾注释是测试通过的版本（Python 3.13，macOS）
+streamlit>=1.51,<2          # 1.51.0
+streamlit-folium>=0.27,<1   # 0.27.2
+folium>=0.20,<1             # 0.20.0
+pandas>=2.2,<3              # 2.3.3
+numpy>=2.0,<3               # 2.3.5
+shapely>=2.0,<3             # 2.1.2
+pytest>=8                   # 8.4.2，只跑测试时需要

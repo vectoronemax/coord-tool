@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Streamlit：本地密钥不入库（.streamlit/config.toml 要入库）
+.streamlit/secrets.toml
+
+# 系统 / 编辑器
+.DS_Store
+.idea/
+.vscode/
+
+# 转换产物（从页面下载后放在本目录时）
+*_已转换.csv
+*_地图.html

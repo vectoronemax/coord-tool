@@ -1,0 +1,12 @@
+# Vector的坐标转换器 · Streamlit 配置
+# Streamlit 只读「启动时所在目录」下的 .streamlit/config.toml，所以要在 apps/coord-tool 里启动。
+
+[theme]
+base = "light"
+primaryColor = "#0f766e"   # 主色：青绿（避开地图上的蓝 = WGS-84、橙 = GCJ-02、红 = 问题点）
+
+[browser]
+gatherUsageStats = false   # 不向 Streamlit 发送使用统计，配合「不上传数据」
+
+[client]
+toolbarMode = "minimal"    # 隐藏右上角的 Deploy（部署到云端）按钮

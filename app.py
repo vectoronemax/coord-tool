@@ -28,9 +28,10 @@ def run_convert(df, lng_col, lat_col, src):
 
 
 def preview_frame(df):
-    """表格预览用：数字按精度转成文本、空值留白（st.dataframe 会把 NaN / None 一律显示成 None）。下载不受影响。"""
+    """表格预览用：数字按精度转成文本、空值留白（st.dataframe 会把 NaN / None 一律显示成 None）。下载不受影响。
+    坐标显示 7 位、和下载文件一致；结果已按 7 位取整，再显示成 6 位会二次进位（天安门 116.4033715 → 116.403372）。"""
     out = df.astype(object).where(df.notna(), "")
-    for cols, fmt in ((COORD_COLS, "{:.6f}"), (["gcj02_offset_m", "bd09_offset_m"], "{:.1f}")):
+    for cols, fmt in ((COORD_COLS, "{:.7f}"), (["gcj02_offset_m", "bd09_offset_m"], "{:.1f}")):
         for c in cols:
             out[c] = [fmt.format(v) if v == v else "" for v in df[c]]   # v == v 为假即 NaN
     return out

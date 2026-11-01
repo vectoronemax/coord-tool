@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vector的坐标转换器</title>
+<meta name="description" content="WGS-84 ⇄ GCJ-02 ⇄ BD-09 坐标转换，离线单文件版：单点换算、CSV 批量转换和坏点校验，全部在浏览器里完成。">
+<!--
+  离线单文件版：由 web/build_html.py 把本模板和省级边界拼成 坐标转换器.html。
+  算法和校验规则与 coord_core.py 一致；不联网、不加载任何外部脚本，双击即可打开，断网也能用。
+-->
+<style>
+:root {
+  --bg: #f5f7f6; --surface: #ffffff; --surface-2: #eef2f1; --ink: #17201f; --muted: #5a6664; --line: #dce3e1;
+  --accent: #0f766e; --accent-hover: #0b5f58; --on-accent: #ffffff; --accent-soft: #e2f1ee;
+  --bad-bg: #fde2e1; --bad-ink: #9b1c1c; --bad-line: #f3b7b3;
+  --info-bg: #edf2f8; --info-ink: #2a4868;
+  --mono: "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #101514; --surface: #172020; --surface-2: #1e2a28; --ink: #e5edeb; --muted: #98a7a4; --line: #2b3936;
+    --accent: #2bb3a3; --accent-hover: #43c6b6; --on-accent: #052320; --accent-soft: #15302c;
+    --bad-bg: #3b1a1a; --bad-ink: #ffb3ad; --bad-line: #6e2c29;
+    --info-bg: #1a2433; --info-ink: #a8c3e6;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #101514; --surface: #172020; --surface-2: #1e2a28; --ink: #e5edeb; --muted: #98a7a4; --line: #2b3936;
+  --accent: #2bb3a3; --accent-hover: #43c6b6; --on-accent: #052320; --accent-soft: #15302c;
+  --bad-bg: #3b1a1a; --bad-ink: #ffb3ad; --bad-line: #6e2c29;
+  --info-bg: #1a2433; --info-ink: #a8c3e6;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.65 var(--sans); }
+.wrap { max-width: 1080px; margin: 0 auto; padding: 32px 16px 48px; }
+h1 { font-size: 30px; line-height: 1.25; margin: 0 0 6px; letter-spacing: .5px; }
+h1 .tag { display: inline-block; vertical-align: middle; margin-left: 10px; padding: 2px 9px; border-radius: 999px;
+  font-size: 13px; font-weight: 600; letter-spacing: 0; background: var(--accent-soft); color: var(--accent); }
+h2 { font-size: 18px; margin: 28px 0 10px; }
+h3 { font-size: 15px; margin: 0 0 8px; }
+p { margin: 0 0 10px; }
+.lead { color: var(--muted); margin-bottom: 22px; }
+.muted { color: var(--muted); font-size: 13px; }
+code, .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 20px; }
+.tab { appearance: none; border: 0; background: none; color: var(--muted); font: inherit; font-weight: 600;
+  padding: 9px 14px; border-bottom: 2px solid transparent; margin-bottom: -1px; cursor: pointer; }
+.tab[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+.tab:focus-visible, .btn:focus-visible, select:focus-visible, input:focus-visible, .drop:focus-within {
+  outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+.grid { display: grid; gap: 14px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.crs-row { display: grid; gap: 10px; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: end; }
+label { display: block; font-size: 13px; color: var(--muted); margin-bottom: 5px; }
+input[type="text"], select { width: 100%; font: inherit; color: var(--ink); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-height: 40px; }
+input[type="text"] { font-family: var(--mono); }
+.btn { appearance: none; font: inherit; font-weight: 600; border-radius: 8px; padding: 8px 16px; min-height: 40px;
+  cursor: pointer; border: 1px solid var(--line); background: var(--surface); color: var(--ink); }
+.btn:hover { border-color: var(--accent); color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--on-accent); }
+.btn.icon { padding: 8px 12px; }
+.btn[disabled] { opacity: .5; cursor: default; }
+
+.result { margin-top: 16px; }
+.result-title { font-weight: 700; margin-bottom: 8px; }
+.big { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; background: var(--surface-2);
+  border-radius: 8px; padding: 10px 12px; margin-bottom: 14px; }
+.big code { font-size: 20px; overflow-wrap: anywhere; flex: 1 1 auto; }
+.metrics { display: grid; gap: 12px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-bottom: 12px; }
+.metric .k { font-size: 13px; color: var(--muted); }
+.metric .v { font-size: 24px; font-family: var(--mono); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.alert { border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
+.alert.bad { background: var(--bad-bg); color: var(--bad-ink); border: 1px solid var(--bad-line); }
+.alert.info { background: var(--info-bg); color: var(--info-ink); }
+.alert.ok { background: var(--accent-soft); color: var(--ink); border: 1px solid var(--line); }
+
+table { border-collapse: collapse; width: 100%; font-size: 13px; }
+th, td { text-align: left; padding: 6px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th { color: var(--muted); font-weight: 600; background: var(--surface); position: sticky; top: 0; }
+td.n { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+.mini tr.hl td { background: var(--accent-soft); }
+.table-box { overflow: auto; max-height: 460px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); }
+tr.bad td { background: var(--bad-bg); color: var(--bad-ink); }
+
+.drop { display: block; border: 1.5px dashed var(--line); border-radius: 12px; padding: 22px; text-align: center;
+  background: var(--surface); cursor: pointer; }
+.drop.over { border-color: var(--accent); background: var(--accent-soft); }
+.drop input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.drop strong { color: var(--accent); }
+.step { margin-top: 22px; }
+.step-title { font-weight: 700; margin-bottom: 10px; }
+.row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.switch { display: inline-flex; gap: 8px; align-items: center; cursor: pointer; color: var(--ink); font-size: 14px; margin: 8px 0 10px; }
+.switch input { width: 16px; height: 16px; accent-color: var(--accent); }
+ul.issues { margin: 6px 0 10px; padding-left: 20px; }
+
+footer { margin-top: 40px; border-top: 1px solid var(--line); padding-top: 18px; }
+footer ul { padding-left: 20px; margin: 6px 0 14px; }
+footer li { margin-bottom: 4px; }
+.privacy { background: var(--accent-soft); border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; }
+
+@media (max-width: 720px) {
+  .wrap { padding-top: 20px; }
+  h1 { font-size: 24px; }
+  .grid.four { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .metric .v { font-size: 19px; }
+}
+@media (max-width: 460px) {
+  .grid, .grid.four { grid-template-columns: minmax(0, 1fr); }
+  .crs-row { grid-template-columns: minmax(0, 1fr); }
+  .crs-row .btn.icon { justify-self: start; }
+  .metrics { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Vector的坐标转换器<span class="tag">离线版</span></h1>
+    <p class="lead">WGS-84 ⇄ GCJ-02 ⇄ BD-09 六向互转：单点即时换算，或整表批量转换，自动揪出写反、越界、国外、海上的坏点。</p>
+  </header>
+  <noscript><div class="alert bad">需要开启 JavaScript 才能使用。</div></noscript>
+
+  <div class="tabs" role="tablist">
+    <button class="tab" role="tab" id="tab-one" aria-controls="panel-one" aria-selected="true">单点转换</button>
+    <button class="tab" role="tab" id="tab-batch" aria-controls="panel-batch" aria-selected="false">批量转换</button>
+  </div>
+
+  <!-- 单点 -->
+  <section id="panel-one" role="tabpanel" aria-labelledby="tab-one">
+    <div class="card">
+      <div class="grid">
+        <div><label for="lng">经度 lng</label><input type="text" id="lng" inputmode="decimal" value="116.397128" autocomplete="off"></div>
+        <div><label for="lat">纬度 lat</label><input type="text" id="lat" inputmode="decimal" value="39.908722" autocomplete="off"></div>
+      </div>
+      <p class="muted" style="margin:6px 0 14px">可以直接把「经度,纬度」整段粘贴进经度框，会自动拆开。</p>
+      <div class="crs-row">
+        <div><label for="src">源坐标系</label><select id="src"></select></div>
+        <button class="btn icon" id="swap" type="button" title="对调源和目标" aria-label="对调源坐标系和目标坐标系">⇄</button>
+        <div><label for="dst">目标坐标系</label><select id="dst"></select></div>
+      </div>
+      <div class="result" id="one-result" aria-live="polite"></div>
+    </div>
+  </section>
+
+  <!-- 批量 -->
+  <section id="panel-batch" role="tabpanel" aria-labelledby="tab-batch" hidden>
+    <label class="drop" id="drop">
+      <input type="file" id="file" accept=".csv,text/csv">
+      <strong>① 选择 CSV 文件</strong>，或拖到这里（UTF-8 / GBK 编码都行）
+      <div class="muted" style="margin-top:4px">文件只在你的浏览器里读取，不会上传到任何地方。</div>
+    </label>
+    <div id="batch-msg"></div>
+    <div id="batch-options" hidden>
+      <div class="step">
+        <div class="step-title">② 选择经纬度列和源坐标系</div>
+        <div class="grid four">
+          <div><label for="col-lng">经度列</label><select id="col-lng"></select></div>
+          <div><label for="col-lat">纬度列</label><select id="col-lat"></select></div>
+          <div><label for="batch-src">源坐标系</label><select id="batch-src"></select></div>
+          <div><label for="col-label">点名列（预览用）</label><select id="col-label"></select></div>
+        </div>
+        <p class="muted" style="margin-top:8px">列和源坐标系是按列名猜的，请核对：列名写着 WGS-84 的数据，实际可能是从国内地图上取的 GCJ-02。</p>
+        <button class="btn primary" id="run" type="button">③ 转换</button>
+      </div>
+    </div>
+    <div id="batch-result" aria-live="polite"></div>
+  </section>
+
+  <footer>
+    <h2 style="margin-top:0">算法说明</h2>
+    <ul>
+      <li><b>WGS-84 → GCJ-02</b>：开源社区流传的公开加偏公式（克拉索夫斯基椭球参数 + 正弦扰动项）。非官方发布，主流开源库都用这一版；中国范围框外不加偏。</li>
+      <li><b>GCJ-02 → BD-09</b>：百度公开的 x_pi 公式。</li>
+      <li><b>反算</b>（GCJ-02 → WGS-84、BD-09 → GCJ-02）：公式没有解析逆，从目标点出发，用正算的残差修正 5 轮，往返误差 &lt; 1 毫米（外滩实测逐轮 479 m → 2.2 m → 7 mm → 0.025 mm → 0）；WGS-84 ⇄ BD-09 经 GCJ-02 中转。</li>
+      <li><b>偏移距离</b>：转换前后两组数字画在同一张图上的球面距离（半正矢公式，地球平均半径 6371008.8 米）。</li>
+      <li><b>校验</b>：只有正常的点才转换，问题点不转换、给出原因。每个点只标一个最能说明问题的类型，依次判断：缺失或非数字 → (0, 0) → 落在省级区内即正常 → 交换经纬度后落进省级区＝写反 → 超出 ±180 / ±90 → 中国范围框外＝国外 → 其余＝框内但不在省级区（海上或邻国）。</li>
+      <li><b>省级边界</b>：阿里云 DataV.GeoAtlas（GCJ-02），已内嵌在本文件里。边界经过简化，紧贴海岸的点可能被误标，说明里会给出最近省份和距离。</li>
+      <li>与 Python 版 <code>coord_core.py</code> 同一套算法和校验规则；本离线版没有地图预览（地图底图需要联网加载）。</li>
+    </ul>
+    <div class="privacy">🔒 <b>离线计算、不上传数据</b>：这是一个独立的网页文件，所有换算和校验都在你的浏览器里完成，不联网、不调用任何 API、不加载外部脚本；选中的 CSV 只在本机内存里读取，不会上传。可以断网使用，也可以直接把这个文件发给别人。</div>
+  </footer>
+</div>
+
+<script id="province-data" type="application/json">__PROVINCES__</script>
+<script>
+/* ===================== 核心算法（与 coord_core.py 一致，不碰页面） ===================== */
+(function () {
+  "use strict";
+  const A = 6378245.0;                       // 克拉索夫斯基椭球长半轴
+  const EE = 0.00669342162296594323;         // 第一偏心率平方
+  const X_PI = Math.PI * 3000.0 / 180.0;     // BD-09 常数
+  const EARTH_R = 6371008.8;                 // 地球平均半径（米）
+  const INVERT_ROUNDS = 5;                   // 反算残差修正轮数
+  const CRS = ["WGS-84", "GCJ-02", "BD-09"];
+
+  const OK = "正常";
+  const ISSUE_SWAPPED = "经纬度写反", ISSUE_RANGE = "超出范围或零值", ISSUE_ABROAD = "落在国外";
+  const ISSUE_OFFLAND = "框内但不在省级区", ISSUE_MISSING = "缺失或非数字";
+  const ISSUES = [ISSUE_SWAPPED, ISSUE_RANGE, ISSUE_ABROAD, ISSUE_OFFLAND, ISSUE_MISSING];
+  const OUT_COLS = ["wgs84_lng", "wgs84_lat", "gcj02_lng", "gcj02_lat", "bd09_lng", "bd09_lat",
+                    "gcj02_offset_m", "bd09_offset_m", "province", "check", "issue", "check_note"];
+
+  // ---------- 基础 ----------
+  function outOfChina(lng, lat) {
+    return !(72.004 <= lng && lng <= 137.8347 && 0.8293 <= lat && lat <= 55.8271);
+  }
+  function normalizeCrs(name) {
+    const key = String(name).toUpperCase().replace(/[-_ ]/g, "");
+    for (const c of CRS) if (key === c.replace("-", "")) return c;
+    throw new Error(`不认识的坐标系：${name}，可选 ${CRS.join(", ")}`);
+  }
+  function checkLngLat(lng, lat) {
+    if (!(Number.isFinite(lng) && Number.isFinite(lat))) throw new Error("经纬度必须是有限数字");
+    if (!(-180 <= lng && lng <= 180)) throw new Error(`经度 ${lng} 超出 [-180, 180]，是不是把经纬度填反了？`);
+    if (!(-90 <= lat && lat <= 90)) throw new Error(`纬度 ${lat} 超出 [-90, 90]，是不是把经纬度填反了？`);
+  }
+  function haversine(lng1, lat1, lng2, lat2) {
+    const p1 = lat1 * Math.PI / 180, p2 = lat2 * Math.PI / 180;
+    const dp = p2 - p1, dl = (lng2 - lng1) * Math.PI / 180;
+    const h = Math.sin(dp / 2) ** 2 + Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+    return 2 * EARTH_R * Math.asin(Math.sqrt(h));
+  }
+  function invert(forward, lng, lat) {
+    let x = lng, y = lat;
+    for (let k = 0; k < INVERT_ROUNDS; k++) {
+      const [fx, fy] = forward(x, y);
+      x = x - (fx - lng);
+      y = y - (fy - lat);
+    }
+    return [x, y];
+  }
+
+  // ---------- WGS-84 ⇄ GCJ-02 ----------
+  function transformLat(x, y) {
+    let r = -100.0 + 2.0 * x + 3.0 * y + 0.2 * y * y + 0.1 * x * y + 0.2 * Math.sqrt(Math.abs(x));
+    r += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+    r += (20.0 * Math.sin(y * Math.PI) + 40.0 * Math.sin(y / 3.0 * Math.PI)) * 2.0 / 3.0;
+    r += (160.0 * Math.sin(y / 12.0 * Math.PI) + 320.0 * Math.sin(y * Math.PI / 30.0)) * 2.0 / 3.0;
+    return r;
+  }
+  function transformLng(x, y) {
+    let r = 300.0 + x + 2.0 * y + 0.1 * x * x + 0.1 * x * y + 0.1 * Math.sqrt(Math.abs(x));
+    r += (20.0 * Math.sin(6.0 * x * Math.PI) + 20.0 * Math.sin(2.0 * x * Math.PI)) * 2.0 / 3.0;
+    r += (20.0 * Math.sin(x * Math.PI) + 40.0 * Math.sin(x / 3.0 * Math.PI)) * 2.0 / 3.0;
+    r += (150.0 * Math.sin(x / 12.0 * Math.PI) + 300.0 * Math.sin(x / 30.0 * Math.PI)) * 2.0 / 3.0;
+    return r;
+  }
+  function wgs84ToGcj02(lng, lat) {
+    if (outOfChina(lng, lat)) return [lng, lat];
+    let dlat = transformLat(lng - 105.0, lat - 35.0);
+    let dlng = transformLng(lng - 105.0, lat - 35.0);
+    const rad = lat / 180.0 * Math.PI;
+    const magic = 1 - EE * Math.sin(rad) ** 2;
+    const sqrtMagic = Math.sqrt(magic);
+    dlat = dlat * 180.0 / ((A * (1 - EE)) / (magic * sqrtMagic) * Math.PI);
+    dlng = dlng * 180.0 / (A / sqrtMagic * Math.cos(rad) * Math.PI);
+    return [lng + dlng, lat + dlat];
+  }
+  const gcj02ToWgs84 = (lng, lat) => invert(wgs84ToGcj02, lng, lat);
+
+  // ---------- GCJ-02 ⇄ BD-09 ----------
+  function gcj02ToBd09(lng, lat) {
+    const z = Math.sqrt(lng * lng + lat * lat) + 0.00002 * Math.sin(lat * X_PI);
+    const theta = Math.atan2(lat, lng) + 0.000003 * Math.cos(lng * X_PI);
+    return [z * Math.cos(theta) + 0.0065, z * Math.sin(theta) + 0.006];
+  }
+  const bd09ToGcj02 = (lng, lat) => invert(gcj02ToBd09, lng, lat);
+  const wgs84ToBd09 = (lng, lat) => gcj02ToBd09(...wgs84ToGcj02(lng, lat));
+  const bd09ToWgs84 = (lng, lat) => gcj02ToWgs84(...bd09ToGcj02(lng, lat));
+
+  const FUNCS = {
+    "WGS-84>GCJ-02": wgs84ToGcj02, "GCJ-02>WGS-84": gcj02ToWgs84,
+    "GCJ-02>BD-09": gcj02ToBd09, "BD-09>GCJ-02": bd09ToGcj02,
+    "WGS-84>BD-09": wgs84ToBd09, "BD-09>WGS-84": bd09ToWgs84,
+  };
+  /** 套公式转换一个点；只拦非数字和越界，业务校验走 convertPoint / checkRows。 */
+  function convert(lng, lat, src, dst) {
+    lng = Number(lng); lat = Number(lat);
+    checkLngLat(lng, lat);
+    src = normalizeCrs(src); dst = normalizeCrs(dst);
+    if (src === dst) return [lng, lat];
+    return FUNCS[`${src}>${dst}`](lng, lat);
+  }
+
+  // ---------- 省级边界（GCJ-02） ----------
+  const PROVINCES = JSON.parse(document.getElementById("province-data").textContent).map(p => {
+    const polys = p.p.map(rings => ({ rings, bbox: bboxOf([rings[0]]) }));
+    return { name: p.n, polys, bbox: bboxOf(polys.map(q => q.rings[0])) };
+  });
+  function bboxOf(rings) {
+    const b = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const r of rings) for (let i = 0; i < r.length; i += 2) {
+      if (r[i] < b[0]) b[0] = r[i]; if (r[i] > b[2]) b[2] = r[i];
+      if (r[i + 1] < b[1]) b[1] = r[i + 1]; if (r[i + 1] > b[3]) b[3] = r[i + 1];
+    }
+    return b;
+  }
+  const inBox = (x, y, b) => x >= b[0] && x <= b[2] && y >= b[1] && y <= b[3];
+  function inRing(x, y, r) {                 // 射线法；r 是扁平数组 [x0, y0, x1, y1, ...]
+    let inside = false;
+    for (let i = 0, j = r.length - 2; i < r.length; j = i, i += 2) {
+      const xi = r[i], yi = r[i + 1], xj = r[j], yj = r[j + 1];
+      if ((yi > y) !== (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi) inside = !inside;
+    }
+    return inside;
+  }
+  /** GCJ-02 点 → 所在省级区名，不在任何省级区内为 null。 */
+  function locateProvince(x, y) {
+    for (const pv of PROVINCES) {
+      if (!inBox(x, y, pv.bbox)) continue;
+      for (const poly of pv.polys) {
+        if (!inBox(x, y, poly.bbox)) continue;
+        let hits = 0;
+        for (const ring of poly.rings) if (inRing(x, y, ring)) hits++;
+        if (hits % 2) return pv.name;            // 外环内、洞外
+      }
+    }
+    return null;
+  }
+  /** 离 GCJ-02 点最近的省级区，返回 [省名, 距离米]（经纬度平面上找最近点，再算球面距离）。 */
+  function nearestProvince(x, y) {
+    let best = Infinity, bx = x, by = y, bn = null;
+    for (const pv of PROVINCES) for (const poly of pv.polys) for (const r of poly.rings) {
+      for (let i = 0; i + 3 < r.length; i += 2) {
+        const x1 = r[i], y1 = r[i + 1], dx = r[i + 2] - x1, dy = r[i + 3] - y1;
+        const len2 = dx * dx + dy * dy;
+        let t = len2 ? ((x - x1) * dx + (y - y1) * dy) / len2 : 0;
+        t = Math.max(0, Math.min(1, t));
+        const px = x1 + t * dx, py = y1 + t * dy, d2 = (x - px) ** 2 + (y - py) ** 2;
+        if (d2 < best) { best = d2; bx = px; by = py; bn = pv.name; }
+      }
+    }
+    return [bn, haversine(x, y, bx, by)];
+  }
+
+  // ---------- 校验 + 转换（对应 coord_core.check_and_convert） ----------
+  const NUM_RE = /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/;
+  function toNum(v) {
+    if (typeof v === "number") return v;
+    if (v == null) return NaN;
+    const s = String(v).trim();
+    return NUM_RE.test(s) ? parseFloat(s) : NaN;
+  }
+  const showRaw = v => (v == null || (typeof v === "number" && Number.isNaN(v)) || !String(v).trim()) ? "（空）" : String(v);
+  const pyFloat = v => Number.isInteger(v) ? v.toFixed(1) : String(v);   // 和 Python 打印浮点一致：40 → 40.0
+  const round = (v, d) => Math.round(v * 10 ** d) / 10 ** d;
+
+  function toAll(x, y, src) {
+    const out = [];
+    for (const c of CRS) out.push(...convert(x, y, src, c));
+    return out;
+  }
+
+  /** 一列经度、一列纬度逐行校验并转换，返回每行一个对象（键为 OUT_COLS）。只有正常行有坐标。 */
+  function checkRows(xsRaw, ysRaw, src) {
+    src = normalizeCrs(src);
+    const rows = [];
+    for (let i = 0; i < xsRaw.length; i++) {
+      const x = toNum(xsRaw[i]), y = toNum(ysRaw[i]);
+      const finite = Number.isFinite(x) && Number.isFinite(y);
+      const zero = finite && x === 0 && y === 0;
+      const inRange = finite && Math.abs(x) <= 180 && Math.abs(y) <= 90;
+      let c = null, prov = null, swapProv = null;
+      if (inRange && !zero) {
+        c = toAll(x, y, src);
+        prov = locateProvince(c[2], c[3]);
+      }
+      if (finite && !zero && !prov && Math.abs(y) <= 180 && Math.abs(x) <= 90) {
+        const g = toAll(y, x, src);
+        swapProv = locateProvince(g[2], g[3]);
+      }
+
+      let keep = false, issue = null, note = "";
+      if (!finite) {
+        issue = ISSUE_MISSING; note = `原值 经度=${showRaw(xsRaw[i])} 纬度=${showRaw(ysRaw[i])}`;
+      } else if (zero) {
+        issue = ISSUE_RANGE; note = "(0, 0)：多半是缺失值被填成了 0";
+      } else if (prov) {
+        keep = true;
+      } else if (swapProv) {
+        issue = ISSUE_SWAPPED; note = `交换后 (${pyFloat(y)}, ${pyFloat(x)}) 落在${swapProv}，请核对后交换`;
+      } else if (!inRange) {
+        issue = ISSUE_RANGE; note = "经度须在 ±180、纬度须在 ±90 以内";
+      } else if (outOfChina(c[0], c[1])) {
+        issue = ISSUE_ABROAD; note = "在中国范围框外：GCJ-02 / BD-09 只在国内地图上用，框外换算没有意义";
+      } else {
+        issue = ISSUE_OFFLAND;
+        const [name, dist] = nearestProvince(c[2], c[3]);
+        note = `在中国范围框内但不在任何省级区内（海上或邻国），最近的是${name}，约 ${(dist / 1000).toFixed(1)} km`;
+      }
+
+      const rec = Object.fromEntries(OUT_COLS.map(k => [k, null]));
+      if (keep) {
+        OUT_COLS.slice(0, 6).forEach((k, j) => { rec[k] = round(c[j], 7); });
+        rec.gcj02_offset_m = round(haversine(c[0], c[1], c[2], c[3]), 2);
+        rec.bd09_offset_m = round(haversine(c[0], c[1], c[4], c[5]), 2);
+      }
+      Object.assign(rec, { province: prov, check: issue ? "问题" : OK, issue, check_note: note });
+      rows.push(rec);
+    }
+    return rows;
+  }
+
+  /** 单点：规则和整表一样，问题点 lng / lat / offset_m 为 null，看 issue 和 note。 */
+  function convertPoint(lng, lat, src, dst) {
+    src = normalizeCrs(src); dst = normalizeCrs(dst);
+    const r = checkRows([lng], [lat], src)[0];
+    const out = { src, dst, lng: null, lat: null, offset_m: null, all: null,
+                  check: r.check, issue: r.issue, note: r.check_note, province: r.province };
+    if (r.check === OK) {
+      const x = toNum(lng), y = toNum(lat);
+      [out.lng, out.lat] = convert(x, y, src, dst);
+      out.offset_m = haversine(x, y, out.lng, out.lat);
+      const a = toAll(x, y, src);
+      out.all = { "WGS-84": [a[0], a[1]], "GCJ-02": [a[2], a[3]], "BD-09": [a[4], a[5]] };
+    }
+    return out;
+  }
+
+  // ---------- CSV ----------
+  function decodeBytes(buf) {
+    try { return new TextDecoder("utf-8", { fatal: true }).decode(buf); }
+    catch (e) { return new TextDecoder("gbk").decode(buf); }
+  }
+  function parseCsv(text) {
+    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+    const rows = [];
+    let row = [], field = "", q = false;
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      if (q) {
+        if (ch === '"') {
+          if (text[i + 1] === '"') { field += '"'; i++; } else q = false;
+        } else field += ch;
+      } else if (ch === '"') q = true;
+      else if (ch === ",") { row.push(field); field = ""; }
+      else if (ch === "\n" || ch === "\r") {
+        if (ch === "\r" && text[i + 1] === "\n") i++;
+        row.push(field); rows.push(row); row = []; field = "";
+      } else field += ch;
+    }
+    if (field !== "" || row.length) { row.push(field); rows.push(row); }
+    return rows.filter(r => !(r.length === 1 && r[0] === ""));      // 跳过空行
+  }
+  /** CSV 文本 → {header, rows}；所有值都当文本保留（前导 0 不丢）。表头重名按 pandas 习惯加 .1、.2。 */
+  function readTable(text) {
+    const all = parseCsv(text);
+    if (!all.length) throw new Error("文件是空的");
+    const seen = {};
+    const header = all[0].map(h => {
+      if (!(h in seen)) { seen[h] = 0; return h; }
+      seen[h] += 1; return `${h}.${seen[h]}`;
+    });
+    const rows = all.slice(1).map((r, i) => {
+      if (r.length > header.length) throw new Error(`第 ${i + 2} 行有 ${r.length} 个字段，表头只有 ${header.length} 列`);
+      return header.map((_, j) => (j < r.length ? r[j] : ""));
+    });
+    return { header, rows };
+  }
+  function guessColumns(columns) {
+    const find = keys => columns.find(c => keys.some(k => String(c).toLowerCase().includes(k))) ?? null;
+    const lng = find(["lng", "lon", "经度"]), lat = find(["lat", "纬度"]);
+    const hint = `${lng}${lat}`.toLowerCase();
+    const src = CRS.find(c => hint.includes(c.replace("-", "").toLowerCase().slice(0, 3))) ?? null;
+    return [lng, lat, src];
+  }
+  function csvField(v) {
+    if (v == null || (typeof v === "number" && Number.isNaN(v))) return "";
+    const s = String(v);
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+  /** 原表 + 结果列 → CSV 文本（带 BOM，Excel 直接打开不乱码）。 */
+  function toCsv(header, rows, results) {
+    const lines = [header.concat(OUT_COLS).map(csvField).join(",")];
+    rows.forEach((r, i) => lines.push(r.concat(OUT_COLS.map(k => results[i][k])).map(csvField).join(",")));
+    return "﻿" + lines.join("\n") + "\n";
+  }
+  function summarize(results, labels) {
+    const issues = Object.fromEntries(ISSUES.map(k => [k, []]));
+    let ok = 0;
+    results.forEach((r, i) => { if (r.check === OK) ok++; else issues[r.issue].push(labels[i]); });
+    return { total: results.length, ok, issues };
+  }
+
+  window.CoordCore = {
+    CRS, OK, ISSUES, OUT_COLS, outOfChina, normalizeCrs, haversine, convert, convertPoint, checkRows,
+    wgs84ToGcj02, gcj02ToWgs84, gcj02ToBd09, bd09ToGcj02, wgs84ToBd09, bd09ToWgs84,
+    locateProvince, nearestProvince, decodeBytes, parseCsv, readTable, guessColumns, toCsv, summarize,
+  };
+})();
+
+/* ===================== 页面 ===================== */
+(function () {
+  "use strict";
+  const C = window.CoordCore;
+  const $ = s => document.querySelector(s);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, ch => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+  const f6 = v => v.toFixed(6), f1 = v => v.toFixed(1);
+  const USED_BY = { "WGS-84": "GPS、OpenStreetMap、Google Earth", "GCJ-02": "高德、腾讯、苹果中国区地图", "BD-09": "百度地图" };
+  const PREVIEW_ROWS = 2000;
+
+  // ---------- 标签页 ----------
+  const tabs = [[$("#tab-one"), $("#panel-one")], [$("#tab-batch"), $("#panel-batch")]];
+  tabs.forEach(([tab]) => tab.addEventListener("click", () => {
+    tabs.forEach(([t, p]) => { const on = t === tab; t.setAttribute("aria-selected", on); p.hidden = !on; });
+  }));
+
+  function fillSelect(sel, options, value) {
+    sel.innerHTML = options.map(([v, text]) => `<option value="${esc(v)}">${esc(text)}</option>`).join("");
+    sel.value = value;
+  }
+  async function copyText(text, btn) {
+    try { await navigator.clipboard.writeText(text); }
+    catch (e) {                                  // file:// 等不让用剪贴板 API 时的退路
+      const ta = Object.assign(document.createElement("textarea"), { value: text });
+      document.body.appendChild(ta); ta.select(); document.execCommand("copy"); ta.remove();
+    }
+    const old = btn.textContent; btn.textContent = "已复制"; setTimeout(() => { btn.textContent = old; }, 1200);
+  }
+
+  // ---------- 单点 ----------
+  const crsOptions = C.CRS.map(c => [c, c]);
+  fillSelect($("#src"), crsOptions, "WGS-84");
+  fillSelect($("#dst"), crsOptions, "GCJ-02");
+
+  function renderOne() {
+    const box = $("#one-result");
+    const r = C.convertPoint($("#lng").value, $("#lat").value, $("#src").value, $("#dst").value);
+    if (r.check !== C.OK) {
+      box.innerHTML = `<div class="result-title">${esc(r.src)} → ${esc(r.dst)}</div>
+        <div class="alert bad"><b>${esc(r.issue)}</b>，不转换：${esc(r.note)}</div>`;
+      return;
+    }
+    const text = `${f6(r.lng)},${f6(r.lat)}`;
+    const rows = C.CRS.map(c => `<tr class="${c === r.src || c === r.dst ? "hl" : ""}"><td>${c}${c === r.src ? "（源）" : ""}${c === r.dst && c !== r.src ? "（目标）" : ""}</td>
+        <td class="n">${f6(r.all[c][0])}</td><td class="n">${f6(r.all[c][1])}</td><td>${USED_BY[c]}</td></tr>`).join("");
+    box.innerHTML = `<div class="result-title">${esc(r.src)} → ${esc(r.dst)}</div>
+      <div class="big"><code>${text}</code><button class="btn" type="button" id="copy-one">复制</button></div>
+      <div class="metrics">
+        <div class="metric"><div class="k">经度 lng</div><div class="v">${f6(r.lng)}</div></div>
+        <div class="metric"><div class="k">纬度 lat</div><div class="v">${f6(r.lat)}</div></div>
+        <div class="metric"><div class="k">偏移距离</div><div class="v">${f1(r.offset_m)} 米</div></div>
+      </div>
+      <p class="muted">落在${esc(r.province)}${r.src === r.dst ? "；源和目标是同一个坐标系，原样输出。" : ""}</p>
+      <div class="table-box" style="max-height:none"><table class="mini">
+        <thead><tr><th>同一个点的三套坐标</th><th>经度</th><th>纬度</th><th>谁在用</th></tr></thead><tbody>${rows}</tbody>
+      </table></div>`;
+    $("#copy-one").addEventListener("click", e => copyText(text, e.currentTarget));
+  }
+  ["#lng", "#lat"].forEach(s => $(s).addEventListener("input", renderOne));
+  ["#src", "#dst"].forEach(s => $(s).addEventListener("change", renderOne));
+  $("#swap").addEventListener("click", () => {
+    const s = $("#src").value; $("#src").value = $("#dst").value; $("#dst").value = s; renderOne();
+  });
+  $("#lng").addEventListener("paste", e => {      // 粘贴「经度,纬度」整段时自动拆成两个框
+    const t = (e.clipboardData || window.clipboardData).getData("text").trim();
+    const m = t.match(/^([+-]?[\d.]+)\s*[,，\s]\s*([+-]?[\d.]+)$/);
+    if (!m) return;
+    e.preventDefault(); $("#lng").value = m[1]; $("#lat").value = m[2]; renderOne();
+  });
+  renderOne();
+
+  // ---------- 批量 ----------
+  const state = { name: "", header: [], rows: [], result: null, params: null };
+  const msg = (html, cls = "info") => { $("#batch-msg").innerHTML = html ? `<div class="alert ${cls}">${html}</div>` : ""; };
+
+  async function loadFile(file) {
+    state.result = null; renderBatch();
+    $("#batch-options").hidden = true;
+    try {
+      const { header, rows } = C.readTable(C.decodeBytes(await file.arrayBuffer()));
+      if (!rows.length) { msg("文件里没有数据行。", "bad"); return; }
+      Object.assign(state, { name: file.name, header, rows });
+    } catch (e) { msg(esc(e.message), "bad"); return; }
+    msg(`已读入 <b>${esc(state.name)}</b>：${state.rows.length} 行 × ${state.header.length} 列`);
+    const cols = state.header.map((h, i) => [String(i), h]);
+    const [gLng, gLat, gSrc] = C.guessColumns(state.header);
+    const iLng = gLng !== null ? state.header.indexOf(gLng) : 0;
+    const iLat = gLat !== null ? state.header.indexOf(gLat) : Math.min(1, state.header.length - 1);
+    const other = state.header.findIndex((h, i) => i !== iLng && i !== iLat);
+    fillSelect($("#col-lng"), cols, String(iLng));
+    fillSelect($("#col-lat"), cols, String(iLat));
+    fillSelect($("#batch-src"), crsOptions, gSrc || "WGS-84");
+    fillSelect($("#col-label"), [["-1", "（行号）"], ...cols], String(other));
+    $("#batch-options").hidden = false;
+  }
+  const fileInput = $("#file"), drop = $("#drop");
+  fileInput.addEventListener("change", () => fileInput.files[0] && loadFile(fileInput.files[0]));
+  ["dragenter", "dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+  ["dragleave", "drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+  drop.addEventListener("drop", e => e.dataTransfer.files[0] && loadFile(e.dataTransfer.files[0]));
+  // 选项一变，结果就隐藏，等再点一次「转换」
+  ["#col-lng", "#col-lat", "#batch-src", "#col-label"].forEach(s => $(s).addEventListener("change", () => {
+    state.result = null; renderBatch();
+  }));
+
+  $("#run").addEventListener("click", () => {
+    const iLng = +$("#col-lng").value, iLat = +$("#col-lat").value, src = $("#batch-src").value, iLabel = +$("#col-label").value;
+    if (iLng === iLat) { $("#batch-result").innerHTML = `<div class="alert bad">经度列和纬度列选成了同一列。</div>`; return; }
+    const clash = C.OUT_COLS.filter(c => state.header.includes(c));
+    if (clash.length) { $("#batch-result").innerHTML = `<div class="alert bad">原表已有同名列 ${esc(clash.join(", "))}，先改名再转换。</div>`; return; }
+    $("#batch-result").innerHTML = `<p class="muted">正在转换…</p>`;
+    setTimeout(() => {                           // 先让「正在转换」画出来
+      const results = C.checkRows(state.rows.map(r => r[iLng]), state.rows.map(r => r[iLat]), src);
+      const labels = state.rows.map((r, i) => (iLabel >= 0 ? r[iLabel] : `第 ${i + 1} 行`));
+      state.result = { results, labels, summary: C.summarize(results, labels), onlyBad: false };
+      renderBatch();
+    }, 20);
+  });
+
+  function cellHtml(col, v) {        // 坐标显示 7 位、和下载一致（已按 7 位取整，再显示 6 位会二次进位）
+    if (v == null || v === "") return "<td></td>";
+    if (typeof v === "number") return `<td class="n">${col.endsWith("_m") ? f1(v) : v.toFixed(7)}</td>`;
+    return `<td>${esc(v)}</td>`;
+  }
+  function renderBatch() {
+    const box = $("#batch-result"), res = state.result;
+    if (!res) { box.innerHTML = ""; return; }
+    const s = res.summary;
+    const found = C.ISSUES.filter(k => s.issues[k].length)
+      .map(k => `<li><b>${esc(k)}</b> ${s.issues[k].length} 个：${esc(s.issues[k].join("、"))}</li>`).join("");
+    const idx = res.results.map((r, i) => i).filter(i => !res.onlyBad || res.results[i].check !== C.OK);
+    const shown = idx.slice(0, PREVIEW_ROWS);
+    const head = state.header.concat(C.OUT_COLS).map(h => `<th>${esc(h)}</th>`).join("");
+    const body = shown.map(i => {
+      const r = res.results[i];
+      return `<tr class="${r.check !== C.OK ? "bad" : ""}">${state.rows[i].map(v => `<td>${esc(v)}</td>`).join("")}${
+        C.OUT_COLS.map(k => cellHtml(k, r[k])).join("")}</tr>`;
+    }).join("");
+    box.innerHTML = `
+      <div class="step"><div class="step-title">④ 表格预览</div>
+        <div class="metrics">
+          <div class="metric"><div class="k">总点数</div><div class="v">${s.total}</div></div>
+          <div class="metric"><div class="k">${C.OK}</div><div class="v">${s.ok}</div></div>
+          <div class="metric"><div class="k">有问题（标红）</div><div class="v">${s.total - s.ok}</div></div>
+        </div>
+        ${found ? `<ul class="issues">${found}</ul>` : `<div class="alert ok">全部正常，没有问题点。</div>`}
+        <label class="switch"><input type="checkbox" id="only-bad" ${res.onlyBad ? "checked" : ""}> 只看问题行</label>
+        ${idx.length > PREVIEW_ROWS ? `<p class="muted">只预览前 ${PREVIEW_ROWS} 行，完整结果请下载。</p>` : ""}
+        <div class="table-box"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>
+      </div>
+      <div class="step"><div class="step-title">⑤ 下载结果</div>
+        <button class="btn primary" type="button" id="download">下载结果 CSV（utf-8-sig，Excel 直接打开不乱码）</button>
+        <p class="muted" style="margin-top:8px">原始列原样保留，后面追加三套坐标、偏移米数和校验列；问题行不删不改、不转换（坐标列留空），只打标记。</p>
+      </div>`;
+    $("#only-bad").addEventListener("change", e => { res.onlyBad = e.target.checked; renderBatch(); });
+    $("#download").addEventListener("click", () => {
+      const blob = new Blob([C.toCsv(state.header, state.rows, res.results)], { type: "text/csv;charset=utf-8" });
+      const a = Object.assign(document.createElement("a"), {
+        href: URL.createObjectURL(blob), download: `${state.name.replace(/\.[^.]*$/, "")}_已转换.csv` });
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    });
+  }
+})();
+</script>
+</body>
+</html>
